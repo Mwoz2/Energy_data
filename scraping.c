@@ -5,18 +5,10 @@
 #include <cjson/cJSON.h>
 #include <unistd.h> 
 
-#define CSV_FILENAME "pse_data.csv"
-#define MAX_COUNTRIES 6
-
-typedef struct {
+struct MemoryStruct {
     char *memory;
     size_t size;
-} MemoryStruct;
-
-typedef struct {
-    char kraj[10];  // Kod kraju (CZ, DE, SK, LT, UA, SE)
-    double wartosc; // Warto?? wymiany energii w MW
-} ExchangeRecord;
+};
 
 typedef struct {
     double cieplne;
@@ -24,11 +16,19 @@ typedef struct {
     double wiatrowe;
     double fotowoltaiczne;
     double inne;
-} GenerationRecord;
+} GenerationData;
+
+typedef struct {
+    double CZ, DE, SK, LT, UA, SE;
+} ExchangeData;
+
+typedef struct {
+    double frequency;
+} FrequencyData;
 
 size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp) {
     size_t total_size = size * nmemb;
-    MemoryStruct *mem = (MemoryStruct *)userp;
+    struct MemoryStruct *mem = (struct MemoryStruct *)userp;
 
     char *ptr = realloc(mem->memory, mem->size + total_size + 1);
     if (ptr == NULL) return 0;
@@ -46,10 +46,13 @@ double get_json_double(cJSON *json, const char *key) {
     return (item && cJSON_IsNumber(item)) ? item->valuedouble : 0.0;
 }
 
-void fetch_pse_data(const char *url, GenerationRecord *gen_data, ExchangeRecord exch_data[]) {
+void fetch_pse_data(const char *url, GenerationData *gen_data, ExchangeData *exch_data, FrequencyData *freq_data) {
     CURL *curl;
     CURLcode res;
-    MemoryStruct chunk = {malloc(1), 0};
+    struct MemoryStruct chunk;
+
+    chunk.memory = malloc(1);
+    chunk.size = 0;
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
     curl = curl_easy_init();
@@ -63,11 +66,11 @@ void fetch_pse_data(const char *url, GenerationRecord *gen_data, ExchangeRecord 
         res = curl_easy_perform(curl);
 
         if (res != CURLE_OK) {
-            fprintf(stderr, "? B??d pobierania danych: %s\n", curl_easy_strerror(res));
+            fprintf(stderr, "? Blad pobierania danych: %s\n", curl_easy_strerror(res));
         } else {
             cJSON *json = cJSON_Parse(chunk.memory);
             if (json == NULL) {
-                printf("? B??d parsowania JSON!\n");
+                printf("? Blad parsowania JSON!\n");
             } else {
                 cJSON *data = cJSON_GetObjectItem(json, "data");
                 if (data) {
@@ -78,6 +81,7 @@ void fetch_pse_data(const char *url, GenerationRecord *gen_data, ExchangeRecord 
                         gen_data->wiatrowe = get_json_double(summary, "wiatrowe");
                         gen_data->fotowoltaiczne = get_json_double(summary, "PV");
                         gen_data->inne = get_json_double(summary, "inne");
+                        freq_data->frequency = get_json_double(summary, "czestotliwosc");
                     }
 
                     cJSON *exchanges = cJSON_GetObjectItem(data, "przesyly");
@@ -90,12 +94,12 @@ void fetch_pse_data(const char *url, GenerationRecord *gen_data, ExchangeRecord 
                                 cJSON *value = cJSON_GetObjectItem(item, "wartosc");
 
                                 if (id && cJSON_IsString(id) && value && cJSON_IsNumber(value)) {
-                                    for (int j = 0; j < MAX_COUNTRIES; j++) {
-                                        if (strcmp(exch_data[j].kraj, id->valuestring) == 0) {
-                                            exch_data[j].wartosc = value->valuedouble;
-                                            break;
-                                        }
-                                    }
+                                    if (strcmp(id->valuestring, "CZ") == 0) exch_data->CZ = value->valuedouble;
+                                    else if (strcmp(id->valuestring, "DE") == 0) exch_data->DE = value->valuedouble;
+                                    else if (strcmp(id->valuestring, "SK") == 0) exch_data->SK = value->valuedouble;
+                                    else if (strcmp(id->valuestring, "LT") == 0) exch_data->LT = value->valuedouble;
+                                    else if (strcmp(id->valuestring, "UA") == 0) exch_data->UA = value->valuedouble;
+                                    else if (strcmp(id->valuestring, "SE") == 0) exch_data->SE = value->valuedouble;
                                 }
                             }
                         }
@@ -112,57 +116,68 @@ void fetch_pse_data(const char *url, GenerationRecord *gen_data, ExchangeRecord 
     curl_global_cleanup();
 }
 
-void save_to_csv(const GenerationRecord *gen_data, const ExchangeRecord exch_data[]) {
-    FILE *file = fopen(CSV_FILENAME, "w");
+void save_generation_to_csv(GenerationData gen_data) {
+    FILE *file = fopen("generation_data.csv", "w");
     if (!file) {
-        perror("? Blad otwierania pliku CSV");
+        perror("? Blad otwarcia pliku generation_data.csv");
         return;
     }
 
-    fprintf(file, "Rodzaj, Wartosc (MW)\n");
-    fprintf(file, "Elektrownie cieplne, %.2f\n", gen_data->cieplne);
-    fprintf(file, "Elektrownie wodne, %.2f\n", gen_data->wodne);
-    fprintf(file, "Elektrownie wiatrowe, %.2f\n", gen_data->wiatrowe);
-    fprintf(file, "Elektrownie fotowoltaiczne, %.2f\n", gen_data->fotowoltaiczne);
-    fprintf(file, "Inne odnawialne, %.2f\n", gen_data->inne);
-
-    fprintf(file, "\nKraj, Wymiana energii (MW)\n");
-    for (int i = 0; i < MAX_COUNTRIES; i++) {
-        fprintf(file, "%s, %.2f\n", exch_data[i].kraj, exch_data[i].wartosc);
-    }
+    fprintf(file, "Rodzaj,Wartosc (MW)\n");
+    fprintf(file, "Cieplne,%.2f\n", gen_data.cieplne);
+    fprintf(file, "Wodne,%.2f\n", gen_data.wodne);
+    fprintf(file, "Wiatrowe,%.2f\n", gen_data.wiatrowe);
+    fprintf(file, "Fotowoltaiczne,%.2f\n", gen_data.fotowoltaiczne);
+    fprintf(file, "Inne,%.2f\n", gen_data.inne);
 
     fclose(file);
-    printf("? Dane zapisane do pliku: %s\n", CSV_FILENAME);
 }
 
-void print_data(const GenerationRecord *gen_data, const ExchangeRecord exch_data[]) {
-    printf("\n? Generacja energii (MW):\n");
-    printf("   Cieplne: %.2f MW\n", gen_data->cieplne);
-    printf("   Wodne: %.2f MW\n", gen_data->wodne);
-    printf("   Wiatrowe: %.2f MW\n", gen_data->wiatrowe);
-    printf("   Fotowoltaiczne: %.2f MW\n", gen_data->fotowoltaiczne);
-    printf("   Inne odnawialne: %.2f MW\n", gen_data->inne);
-
-    printf("\n? Wymiana miedzynarodowa (MW):\n");
-    for (int i = 0; i < MAX_COUNTRIES; i++) {
-        printf("   ?? %s: %.2f MW\n", exch_data[i].kraj, exch_data[i].wartosc);
+void save_exchange_to_csv(ExchangeData exch_data) {
+    FILE *file = fopen("exchange_data.csv", "w");
+    if (!file) {
+        perror("? Blad otwarcia pliku exchange_data.csv");
+        return;
     }
+
+    fprintf(file, "Kraj,Wymiana (MW)\n");
+    fprintf(file, "Czechy,%.2f\n", exch_data.CZ);
+    fprintf(file, "Niemcy,%.2f\n", exch_data.DE);
+    fprintf(file, "Slowacja,%.2f\n", exch_data.SK);
+    fprintf(file, "Litwa,%.2f\n", exch_data.LT);
+    fprintf(file, "Ukraina,%.2f\n", exch_data.UA);
+    fprintf(file, "Szwecja,%.2f\n", exch_data.SE);
+
+    fclose(file);
+}
+
+void save_frequency_to_csv(FrequencyData freq_data) {
+    FILE *file = fopen("frequency_data.csv", "w");
+    if (!file) {
+        perror("? Blad otwarcia pliku frequency_data.csv");
+        return;
+    }
+
+    fprintf(file, "Czsstotliwosc (Hz)\n");
+    fprintf(file, "%.3f\n", freq_data.frequency);
+
+    fclose(file);
 }
 
 int main() {
-    ExchangeRecord exch_data[MAX_COUNTRIES] = {
-        {"CZ", 0.0}, {"DE", 0.0}, {"SK", 0.0}, {"LT", 0.0}, {"UA", 0.0}, {"SE", 0.0}
-    };
-
     while (1) {
-        GenerationRecord gen_data = {0};
+        GenerationData gen_data = {0};
+        ExchangeData exch_data = {0};
+        FrequencyData freq_data = {0};
 
-        fetch_pse_data("https://www.pse.pl/transmissionMapService", &gen_data, exch_data);
-        save_to_csv(&gen_data, exch_data);
-        print_data(&gen_data, exch_data);
+        fetch_pse_data("https://www.pse.pl/transmissionMapService", &gen_data, &exch_data, &freq_data);
 
-        printf("\n------------------------------------\n");
-        printf("? Odswiezanie danych za 15 sekund...\n");
+        save_generation_to_csv(gen_data);
+        save_exchange_to_csv(exch_data);
+        save_frequency_to_csv(freq_data);
+
+        printf("? Dane zapisane do plikow CSV. Odswiezanie za 15 sekund...\n");
+
         sleep(15);
     }
 
