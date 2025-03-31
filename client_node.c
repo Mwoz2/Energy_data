@@ -38,7 +38,7 @@ int main(void) {
         if (status == UA_STATUSCODE_GOOD) {
             printf("Kurwaaa: %.2f\n", newValue);
         } else {
-            printf("Wyjebalo!\n");
+            UA_StatusCode_name(status);
         }
     
         sleep(1);

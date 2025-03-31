@@ -1,5 +1,7 @@
 {
     "files.associations": {
-        "log_stdout.h": "c"
-    }
+        "log_stdout.h": "c",
+        "cjson.h": "c"
+    },
+    "C_Cpp.errorSquiggles": "disabled"
 }
