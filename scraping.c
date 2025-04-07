@@ -163,23 +163,17 @@ void save_frequency_to_csv(FrequencyData freq_data) {
 
     fclose(file);
 }
+void scraper() {
+    GenerationData gen_data = {0};
+    ExchangeData exch_data = {0};
+    FrequencyData freq_data = {0};
 
-int main() {
-    while (1) {
-        GenerationData gen_data = {0};
-        ExchangeData exch_data = {0};
-        FrequencyData freq_data = {0};
+    fetch_pse_data("https://www.pse.pl/transmissionMapService", &gen_data, &exch_data, &freq_data);
 
-        fetch_pse_data("https://www.pse.pl/transmissionMapService", &gen_data, &exch_data, &freq_data);
+    save_generation_to_csv(gen_data);
+    save_exchange_to_csv(exch_data);
+    save_frequency_to_csv(freq_data);
 
-        save_generation_to_csv(gen_data);
-        save_exchange_to_csv(exch_data);
-        save_frequency_to_csv(freq_data);
-
-        printf("? Dane zapisane do plikow CSV. Odswiezanie za 15 sekund...\n");
-
-        sleep(15);
-    }
-
-    return 0;
+    printf("? Dane zapisane do plikow CSV.\n");
 }
+
